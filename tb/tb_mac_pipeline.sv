@@ -53,6 +53,8 @@ module tb_mac_pipeline;
     $finish;
   end
 
+  `include "include/fsdb_dump.svh"
+
   always @(posedge clk) begin
     if (out_valid) begin
       $display("t=%0t y=%0d (exp=%0d)", $time, y, expected[idx]);

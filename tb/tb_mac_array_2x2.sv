@@ -1,6 +1,5 @@
 `timescale 1ns/1ps
 module tb_mac_array_2x2;
-
   logic clk, rst_n;
   logic in_valid, out_valid;
   logic signed [7:0] a0, a1, b0, b1;
@@ -56,6 +55,8 @@ module tb_mac_array_2x2;
     @(negedge clk);
     in_valid=0;
   end
+
+  `include "include/fsdb_dump.svh"
 
   // Check final results when out_valid after step 2
   always @(posedge clk) begin
