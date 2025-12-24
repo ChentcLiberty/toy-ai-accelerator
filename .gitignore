@@ -1,18 +1,60 @@
-# build / sim artifacts
+#Dump waves in docs
+!docs/waves/**
+
+
+# Verilog/Verilator build & waves
 obj_dir/
+verilator_build/
 *.vcd
+*.fst
+*.vpd
+*.lxt
+*.lxt2
+*.vcd.gz
+
+# Logs, traces, coverage
 *.log
 *.out
+*.trace
+coverage/
+*.gcda
+*.gcno
+*.gcov
 
-# verilator
-verilator_build/
-*.exe
+# cocotb artifacts
+sim_build/
+results.xml
+junit*.xml
 
-# editor
-.vscode/
-*.swp
-
-# python
+# Python
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.hypothesis/
+.venv/
+venv/
+
+# C/C++ (sim/c_ref)
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.d
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
 
