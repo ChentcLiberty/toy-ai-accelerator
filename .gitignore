@@ -1,0 +1,18 @@
+# build / sim artifacts
+obj_dir/
+*.vcd
+*.log
+*.out
+
+# verilator
+verilator_build/
+*.exe
+
+# editor
+.vscode/
+*.swp
+
+# python
+__pycache__/
+*.pyc
+
