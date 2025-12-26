@@ -58,3 +58,13 @@ build/
 .DS_Store
 Thumbs.db
 
+
+# Backup files
+*.bak
+*.bak1
+
+# Verdi/VCS runtime files
+novas.*
+verdiLog/
+ucli.key
+*.fsdb.vf
