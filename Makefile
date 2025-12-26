@@ -1,139 +1,207 @@
-# Minimal, stable VCS + Verdi Makefile
-# - Auto-discovers RTL/TB sources
-# - Supports FSDB with Verdi (WAVES=1), coverage (COVERAGE=1)
-# - Override variables via command line: e.g. make run TOP=tb_mac_pipeline DEFINES="SIM=1" SEED=42
+# ============================================================
+# Toy AI Accelerator - VCS + Verdi Makefile
+# ============================================================
 
 SHELL := /bin/bash
 
-# -------- Project knobs (override on cmdline as needed) --------
-TOP        ?= tb_mac_pipeline        # Testbench top module name
-INC_DIRS   ?= rtl tb                 # +incdir paths (space-separated)
-DEFINES    ?=                        # +define+FOO+BAR=1
-WAVES      ?= 1                      # 1: link Verdi FSDB VPI and enable dumping via DUMP_FSDB define
-COVERAGE   ?= 0                      # 1: enable VCS coverage
-SEED       ?= 1                      # Random seed
-SIM_ARGS   ?=                        # Extra args to pass to simv (e.g. +trace +dump)
-TIMESCALE  ?= 1ns/1ps                # VCS timescale
+# -------- Project Configuration --------
+TOP        ?= tb_mac_pipeline
+WAVES      ?= 1
+COVERAGE   ?= 0
+SEED       ?= 1
+TIMESCALE  ?= 1ns/1ps
 
-# Root source dirs (auto-recursive)
-RTL_DIRS   ?= rtl
-TB_DIRS    ?= tb
+RTL_DIRS   := rtl
+TB_DIRS    := tb
+INC_DIRS   := rtl tb
 
-# -------- Tool/env detection --------
-# Try VERDI_HOME first, fallback to NOVAS_HOME
-VERDI_HOME ?= $(if $(VERDI_HOME),$(VERDI_HOME),$(NOVAS_HOME))
+# -------- Tool Detection --------
+VERDI_HOME ?= $(NOVAS_HOME)
 
-# -------- Paths --------
-BUILD      ?= build
-CSRC_DIR   := $(BUILD)/csrc
-SIMV       := $(BUILD)/simv
+# -------- Paths (每个 TOP 独立) --------
+BUILD      := build
+SIMV       := $(BUILD)/simv_$(TOP)
 FLIST      := $(BUILD)/filelist.f
-VCS_LOG    := $(BUILD)/vcs.log
-RUN_LOG    := $(BUILD)/run.log
+FSDB       := $(BUILD)/$(TOP).fsdb
+VCS_LOG    := $(BUILD)/vcs_$(TOP).log
+RUN_LOG    := $(BUILD)/run_$(TOP).log
 COV_DIR    := $(BUILD)/cov
-FSDB       := $(BUILD)/waves.fsdb
 
-# -------- Common flags --------
+# -------- Auto-discover Testbenches --------
+TESTBENCHES := $(basename $(notdir $(wildcard $(TB_DIRS)/tb_*.sv)))
+
+# -------- Source Files --------
+SRC_FILES  := $(shell find $(RTL_DIRS) $(TB_DIRS) -type f \( -name "*.sv" -o -name "*.v" \) 2>/dev/null)
+
+# -------- VCS Flags --------
 INC_FLAGS      := $(addprefix +incdir+,$(INC_DIRS))
-DEFINE_FLAGS   := $(addprefix +define+,$(DEFINES))
-VCS_BASE_FLAGS := -full64 -sverilog -lca -kdb -debug_access+all -timescale=$(TIMESCALE) \
-                  -Mdir=$(CSRC_DIR) -o $(SIMV) -l $(VCS_LOG)
+VCS_BASE_FLAGS := -full64 -sverilog -lca -kdb -debug_access+all \
+                  -timescale=$(TIMESCALE) \
+                  -Mdir=$(BUILD)/csrc_$(TOP) -o $(SIMV) -l $(VCS_LOG)
 
-# Verdi FSDB VPI linkage (WAVES=1)
+# -------- Conditional: Waves --------
 ifeq ($(WAVES),1)
   ifneq ($(VERDI_HOME),)
-    # Modern Verdi VPI load
-    VERDI_PLI := -load $(VERDI_HOME)/share/PLI/VCS/LINUX64/novas.vpi:novas_bootstrap
-    # Also define DUMP_FSDB so TB can conditionally call $fsdbDumpvars
-    DEFINE_FLAGS += +define+DUMP_FSDB
-    DEFINE_FLAGS += +define+FSDB_TOP=$(TOP)
-    RUN_WAVE_ARGS := +fsdbfile+$(FSDB)
+    VERDI_PLI    := -P $(VERDI_HOME)/share/PLI/VCS/linux64/novas.tab \
+                       $(VERDI_HOME)/share/PLI/VCS/linux64/pli.a
+    DEFINE_FLAGS += +define+DUMP_FSDB +define+FSDB_TOP=$(TOP)
+    RUN_ARGS     += +fsdbfile=$(FSDB)
   else
-    $(warning WAVES requested but VERDI_HOME/NOVAS_HOME not set; FSDB will be unavailable)
+    $(warning WAVES=1 but VERDI_HOME not set)
   endif
 endif
 
-# Coverage flags
+# -------- Conditional: Coverage --------
 ifeq ($(COVERAGE),1)
   COV_FLAGS := -cm line+cond+tgl+fsm -cm_dir $(COV_DIR)
-  RUN_COV_ARGS := -cm_name $(TOP) -cm_dir $(COV_DIR)
+  RUN_ARGS  += -cm_name $(TOP) -cm_dir $(COV_DIR)
 endif
 
-# -------- Source discovery (prefer rg for speed) --------
-# Builds a filelist with all .sv/.v/.svh/.vh in RTL_DIRS and TB_DIRS
+# -------- Filelist Generation --------
 define GEN_FLIST
-mkdir -p $(BUILD) ; \
-if command -v rg >/dev/null 2>&1 ; then \
-  rg --files $(RTL_DIRS) $(TB_DIRS) | rg -E '\.(sv|v|svh|vh)$$' | sort > $(FLIST) ; \
-else \
-  find $(RTL_DIRS) $(TB_DIRS) -type f \( -name "*.sv" -o -name "*.v" -o -name "*.svh" -o -name "*.vh" \) | sort > $(FLIST) ; \
-fi ; \
-echo "Generated $(FLIST) (`wc -l < $(FLIST)` files)"
+	@mkdir -p $(BUILD)
+	@find $(RTL_DIRS) $(TB_DIRS) -type f \( -name "*.sv" -o -name "*.v" \) \
+	  ! -name "*.svh" ! -name "*.vh" | sort > $(FLIST)
+	@echo "Generated $(FLIST) ($$(wc -l < $(FLIST)) files)"
 endef
 
-# -------- Phony targets --------
-.PHONY: all build run verdi clean realclean filelist help covreport
+# ============================================================
+# Targets
+# ============================================================
+.PHONY: all build run verdi filelist clean realclean help
+.PHONY: run-all run-all-waves list-tb new-tb
+.PHONY: $(TESTBENCHES) $(addsuffix -v,$(TESTBENCHES))
 
 all: run
 
+# -------- Build --------
 build: $(SIMV)
+
+$(FLIST): $(SRC_FILES)
+	$(GEN_FLIST)
 
 $(SIMV): $(FLIST)
 	@mkdir -p $(BUILD)
-	@echo "Compiling with VCS (top=$(TOP))..."
+	@echo "Compiling (TOP=$(TOP), WAVES=$(WAVES))..."
 	@vcs $(VCS_BASE_FLAGS) $(INC_FLAGS) $(DEFINE_FLAGS) $(VERDI_PLI) $(COV_FLAGS) \
 	     -top $(TOP) -f $(FLIST)
 
+# -------- Run --------
 run: build
-	@echo "Running simv (seed=$(SEED))..."
-	@$(SIMV) +ntb_random_seed=$(SEED) $(RUN_WAVE_ARGS) $(RUN_COV_ARGS) $(SIM_ARGS) -l $(RUN_LOG)
+	@echo "Running $(TOP) (SEED=$(SEED))..."
+	@$(SIMV) +ntb_random_seed=$(SEED) $(RUN_ARGS) -l $(RUN_LOG)
 
+# -------- Verdi --------
 verdi:
-	@if [ ! -f "$(FSDB)" ]; then \
-	  echo "No FSDB at $(FSDB). Enable WAVES=1 and ensure TB calls $${fsdbDumpvars} when DUMP_FSDB is defined."; \
-	  echo "Example TB guard: \
-\`ifdef DUMP_FSDB \
-  initial begin \
-    $${fsdbDumpfile}(\"$(FSDB)\"); \
-    $${fsdbDumpvars}(0, $(TOP)); \
-  end \
-\`endif"; \
-	else \
-	  echo "Launching Verdi with $(FSDB) ..."; \
-	  verdi -ssf $(FSDB) -top $(TOP) & \
+	@if [ -z "$$DISPLAY" ]; then \
+	  echo "Error: DISPLAY not set."; \
+	  exit 1; \
 	fi
+	@if [ ! -d "$(BUILD)/simv_$(TOP).daidir" ]; then \
+	  echo "Error: No database for $(TOP). Run 'make $(TOP)' first."; \
+	  exit 1; \
+	fi
+	@if [ ! -f "$(FSDB)" ]; then \
+	  echo "Error: No FSDB: $(FSDB). Run 'make $(TOP)' first."; \
+	  exit 1; \
+	fi
+	@echo "Opening Verdi for $(TOP)..."
+	verdi -dbdir $(BUILD)/simv_$(TOP).daidir -ssf $(FSDB) -top $(TOP)
 
-filelist: $(FLIST)
-$(FLIST):
-	@$(GEN_FLIST)
+# -------- Filelist --------
+filelist:
+	$(GEN_FLIST)
 
-covreport:
-	@if [ "$(COVERAGE)" != "1" ]; then echo "Enable COVERAGE=1 first."; exit 1; fi
-	@mkdir -p $(COV_DIR)
-	@echo "Generating coverage report in $(COV_DIR)..."
-	@urg -full64 -dir $(COV_DIR) -format both -report $(COV_DIR)/report
+# ============================================================
+# Auto TB Targets
+# ============================================================
+$(TESTBENCHES):
+	@$(MAKE) --no-print-directory run TOP=$@ WAVES=1
 
+$(addsuffix -v,$(TESTBENCHES)):
+	@$(MAKE) --no-print-directory verdi TOP=$(patsubst %-v,%,$@)
+
+# -------- Run All --------
+run-all:
+	@echo "Running all (no waves)..."
+	@passed=0; failed=0; \
+	for tb in $(TESTBENCHES); do \
+	  echo "======== $$tb ========"; \
+	  if $(MAKE) --no-print-directory run TOP=$$tb WAVES=0; then \
+	    echo "✓ PASSED"; passed=$$((passed + 1)); \
+	  else \
+	    echo "✗ FAILED"; failed=$$((failed + 1)); \
+	  fi; \
+	done; \
+	echo "========================================"; \
+	echo "Results: $$passed passed, $$failed failed"; \
+	[ $$failed -eq 0 ]
+
+run-all-waves:
+	@echo "Running all (with waves)..."
+	@for tb in $(TESTBENCHES); do \
+	  echo "======== $$tb ========"; \
+	  $(MAKE) --no-print-directory run TOP=$$tb WAVES=1; \
+	done
+	@echo "========================================"
+	@echo "Done! View with: make <tb_name>-v"
+	@echo "========================================"
+
+# -------- List TBs --------
+list-tb:
+	@echo "Available testbenches:"
+	@for tb in $(TESTBENCHES); do echo "  $$tb"; done
+
+# -------- New TB --------
+new-tb:
+	@if [ -z "$(NAME)" ]; then \
+	  echo "Usage: make new-tb NAME=<name>"; \
+	  exit 1; \
+	fi
+	@if [ -f "$(TB_DIRS)/tb_$(NAME).sv" ]; then \
+	  echo "Error: tb_$(NAME).sv exists"; \
+	  exit 1; \
+	fi
+	@echo '`timescale 1ns/1ps' > $(TB_DIRS)/tb_$(NAME).sv
+	@echo '' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo 'module tb_$(NAME);' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo '  `include "include/fsdb_dump.svh"' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo '' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo '  logic clk, rst_n;' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo '  always #5 clk = ~clk;' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo '' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo '  initial begin' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo '    clk = 0; rst_n = 0;' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo '    #20 rst_n = 1;' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo '    repeat(100) @(posedge clk);' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo '    $$display("TEST PASSED");' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo '    $$finish;' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo '  end' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo 'endmodule' >> $(TB_DIRS)/tb_$(NAME).sv
+	@echo "Created: $(TB_DIRS)/tb_$(NAME).sv"
+
+# -------- Clean --------
 clean:
-	@rm -rf $(SIMV) $(CSRC_DIR) $(VCS_LOG) $(RUN_LOG)
+	rm -rf $(BUILD)/simv_* $(BUILD)/csrc_* $(BUILD)/*.log
 
-realclean: clean
-	@rm -rf $(BUILD)
+realclean:
+	rm -rf $(BUILD)
 
+# -------- Help --------
 help:
-	@echo "Targets:"
-	@echo "  build           Compile only (VCS)"
-	@echo "  run             Compile + run (default)"
-	@echo "  verdi           Open Verdi on $(FSDB)"
-	@echo "  filelist        (Re)generate file list"
-	@echo "  covreport       Build coverage report (COVERAGE=1)"
-	@echo "  clean|realclean Clean build artifacts"
+	@echo "============================================"
+	@echo " Toy AI Accelerator Makefile"
+	@echo "============================================"
 	@echo ""
-	@echo "Common overrides:"
-	@echo "  TOP=<tb_top>          (default: $(TOP))"
-	@echo "  DEFINES=\"FOO BAR=1\"  -> +define+FOO +define+BAR=1"
-	@echo "  INC_DIRS=\"rtl tb\"    -> +incdir+..."
-	@echo "  WAVES=0|1             (default: $(WAVES))"
-	@echo "  COVERAGE=0|1          (default: $(COVERAGE))"
-	@echo "  SEED=<int>            (default: $(SEED))"
-	@echo "  SIM_ARGS=\"+args\"     (extra simv args)"
+	@echo "Commands:"
+	@echo "  make list-tb          List testbenches"
+	@echo "  make <tb>             Run testbench"
+	@echo "  make <tb>-v           View waveform"
+	@echo "  make run-all          Run all (no waves)"
+	@echo "  make run-all-waves    Run all (with waves)"
+	@echo "  make new-tb NAME=x    Create testbench"
+	@echo "  make clean            Clean build"
+	@echo ""
+	@echo "Available: $(TESTBENCHES)"
+	@echo "============================================"
 
