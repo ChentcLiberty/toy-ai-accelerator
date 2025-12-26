@@ -1,5 +1,17 @@
 `timescale 1ns/1ps
+
 module tb_mac_pipeline;
+
+ `include "include/fsdb_dump.svh"
+  
+  // ===== 硬编码 FSDB dump 测试 =====
+//  initial begin
+ //   $display("[DEBUG] FSDB dump starting...");
+ //   $fsdbDumpfile("build/waves.fsdb");
+ //   $fsdbDumpvars(0, tb_mac_pipeline);
+ //   $display("[DEBUG] FSDB dump enabled!");
+ // end
+  // ===== 结束 =====
 
   logic clk, rst_n;
   logic        in_valid;
@@ -7,6 +19,7 @@ module tb_mac_pipeline;
   logic signed [31:0] acc;
   logic        out_valid;
   logic signed [31:0] y;
+
 
   mac_pipeline dut (
     .clk(clk), .rst_n(rst_n),
@@ -53,7 +66,6 @@ module tb_mac_pipeline;
     $finish;
   end
 
-  `include "include/fsdb_dump.svh"
 
   always @(posedge clk) begin
     if (out_valid) begin
